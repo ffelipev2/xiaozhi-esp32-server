@@ -12,6 +12,7 @@ class VLLMProvider(VLLMProviderBase):
     def __init__(self, config):
         self.model_name = config.get("model_name")
         self.api_key = config.get("api_key")
+        self.system_prompt = config.get("system_prompt", "请使用中文回复。")
         if "base_url" in config:
             self.base_url = config.get("base_url")
         else:
@@ -40,7 +41,6 @@ class VLLMProvider(VLLMProviderBase):
         self.client = openai.OpenAI(api_key=self.api_key, base_url=self.base_url)
 
     def response(self, question, base64_image):
-        question = question + "(请使用中文回复)"
         try:
             messages = [
                 {
@@ -56,9 +56,16 @@ class VLLMProvider(VLLMProviderBase):
                     ],
                 }
             ]
+            if self.system_prompt:
+                messages.insert(0, {"role": "system", "content": self.system_prompt})
 
             response = self.client.chat.completions.create(
-                model=self.model_name, messages=messages, stream=False
+                model=self.model_name,
+                messages=messages,
+                stream=False,
+                max_tokens=self.max_tokens,
+                temperature=self.temperature,
+                top_p=self.top_p,
             )
 
             return response.choices[0].message.content

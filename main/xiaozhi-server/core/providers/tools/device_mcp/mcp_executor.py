@@ -1,11 +1,13 @@
 """设备端MCP工具执行器"""
 
+import asyncio
 from typing import Dict, Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from core.connection import ConnectionHandler
 from ..base import ToolType, ToolDefinition, ToolExecutor
 from plugins_func.register import Action, ActionResponse
+from core.utils.response_language import localized_message
 from .mcp_handler import call_mcp_tool
 
 
@@ -22,13 +24,19 @@ class DeviceMCPExecutor(ToolExecutor):
         if not hasattr(conn, "mcp_client") or not conn.mcp_client:
             return ActionResponse(
                 action=Action.ERROR,
-                response="设备端MCP客户端未初始化",
+                response=localized_message(
+                    conn.config, "Las funciones de la placa todavía no están disponibles. Inténtalo otra vez.",
+                    "设备端MCP客户端未初始化",
+                ),
             )
 
         if not await conn.mcp_client.is_ready():
             return ActionResponse(
                 action=Action.ERROR,
-                response="设备端MCP客户端未准备就绪",
+                response=localized_message(
+                    conn.config, "La placa todavía se está conectando. Inténtalo otra vez.",
+                    "设备端MCP客户端未准备就绪",
+                ),
             )
 
         try:
@@ -61,9 +69,19 @@ class DeviceMCPExecutor(ToolExecutor):
             return ActionResponse(action=Action.REQLLM, result=str(result))
 
         except ValueError as e:
-            return ActionResponse(action=Action.NOTFOUND, response=str(e))
+            return ActionResponse(
+                action=Action.NOTFOUND,
+                response=localized_message(conn.config, "La función solicitada no está disponible en la placa.", str(e)),
+            )
         except Exception as e:
-            return ActionResponse(action=Action.ERROR, response=str(e))
+            message = "Lo siento, no pude completar esa solicitud. Inténtalo otra vez."
+            if "failed to capture photo" in str(e).lower():
+                message = "No pude tomar la foto. Revisa la cámara e inténtalo otra vez."
+            elif isinstance(e, (TimeoutError, asyncio.TimeoutError)):
+                message = "La placa no respondió a tiempo. Inténtalo otra vez."
+            return ActionResponse(
+                action=Action.ERROR, response=localized_message(conn.config, message, str(e)),
+            )
 
     def get_tools(self) -> Dict[str, ToolDefinition]:
         """获取所有设备端MCP工具"""

@@ -170,7 +170,8 @@ class UnifiedToolHandler:
 
             # 发送工具调用显示消息到设备
             try:
-                await send_display_message(self.conn, f"% {function_name}")
+                if self.config.get("show_tool_call_messages", True):
+                    await send_display_message(self.conn, f"% {function_name}")
             except Exception as e:
                 self.logger.warning(f"发送工具调用显示消息失败: {e}")
 

@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from core.connection import ConnectionHandler
 from config.logger import setup_logging
 from jinja2 import Template
+from core.utils.response_language import uses_spanish
 
 TAG = __name__
 
@@ -137,6 +138,11 @@ class PromptManager:
 
         today_date = get_current_date()
         today_weekday = get_current_weekday()
+        if uses_spanish(self.config):
+            weekdays = dict(zip(WEEKDAY_MAP.values(), (
+                "lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo",
+            )))
+            today_weekday = weekdays.get(today_weekday, today_weekday)
         lunar_date = get_current_lunar_date() + "\n"
 
         return today_date, today_weekday, lunar_date

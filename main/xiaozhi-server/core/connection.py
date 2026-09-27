@@ -29,7 +29,7 @@ from core.utils.modules_initialize import (
 )
 from core.handle.reportHandle import report, enqueue_tool_report
 from core.providers.tts.default import DefaultTTS
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from core.utils.dialogue import Message, Dialogue
 from core.providers.asr.dto.dto import InterfaceType
 from core.handle.textHandle import handleTextMessage
@@ -45,6 +45,8 @@ from core.utils.prompt_manager import PromptManager
 from core.utils.voiceprint_provider import VoiceprintProvider
 from core.utils.util import get_system_error_response
 from core.utils import textUtils
+from core.utils.camera_requests import wait_for_camera_registration
+from core.utils.response_language import localized_message, uses_spanish
 
 
 TAG = __name__
@@ -74,6 +76,19 @@ DIRECT_ANSWER_TOOL = {
         },
     },
 }
+
+
+def direct_answer_tool(config):
+    tool = copy.deepcopy(DIRECT_ANSWER_TOOL)
+    if uses_spanish(config):
+        tool["function"]["description"] = (
+            "Responde directamente si la solicitud no requiere ninguna otra herramienta. "
+            "Escribe la respuesta completa exclusivamente en español en el argumento response."
+        )
+        tool["function"]["parameters"]["properties"]["response"]["description"] = (
+            "Respuesta completa para el usuario, exclusivamente en español."
+        )
+    return tool
 
 
 class ConnectionHandler:
@@ -692,40 +707,49 @@ class ConnectionHandler:
 
         # 示例1：direct_answer（回复内容写在 response 参数里，无需递归）
         da_tc_id = "fewshot_da_001"
-        self.dialogue.put(Message(role="user", content="给我讲个故事吧", is_temporary=True))
+        story_request = localized_message(self.config, "Cuéntame un cuento.", "给我讲个故事吧")
+        story_answer = localized_message(
+            self.config, "Claro. ¿Prefieres un cuento de aventuras o uno divertido?",
+            "好呀，你想听什么类型的呀？童话、冒险还是搞笑的？选一个我给你开讲~",
+        )
+        self.dialogue.put(Message(role="user", content=story_request, is_temporary=True))
         self.dialogue.put(Message(
             role="assistant",
             tool_calls=[{
                 "id": da_tc_id,
-                "function": {"arguments": '{"response": "好呀，你想听什么类型的呀？童话、冒险还是搞笑的？选一个我给你开讲~"}', "name": "direct_answer"},
+                "function": {"arguments": json.dumps({"response": story_answer}, ensure_ascii=False), "name": "direct_answer"},
                 "type": "function", "index": 0,
             }],
             is_temporary=True,
         ))
         self.dialogue.put(Message(
             role="tool", tool_call_id=da_tc_id,
-            content="已直接回复", is_temporary=True,
+            content=localized_message(self.config, "Respuesta entregada.", "已直接回复"), is_temporary=True,
         ))
 
         # 示例2：真实工具调用（handle_exit_intent）
         if "handle_exit_intent" in tool_names:
             tc_id = "fewshot_exit_001"
-            self.dialogue.put(Message(role="user", content="拜拜", is_temporary=True))
+            goodbye = localized_message(self.config, "Hasta luego. Hablamos pronto.", "再见，下次再聊~")
+            self.dialogue.put(Message(
+                role="user", content=localized_message(self.config, "Hasta luego.", "拜拜"),
+                is_temporary=True,
+            ))
             self.dialogue.put(Message(
                 role="assistant",
                 tool_calls=[{
                     "id": tc_id,
-                    "function": {"arguments": '{"say_goodbye": "再见，下次再聊~"}', "name": "handle_exit_intent"},
+                    "function": {"arguments": json.dumps({"say_goodbye": goodbye}, ensure_ascii=False), "name": "handle_exit_intent"},
                     "type": "function", "index": 0,
                 }],
                 is_temporary=True,
             ))
             self.dialogue.put(Message(
                 role="tool", tool_call_id=tc_id,
-                content="退出意图已处理", is_temporary=True,
+                content=localized_message(self.config, "Despedida procesada.", "退出意图已处理"), is_temporary=True,
             ))
             self.dialogue.put(Message(
-                role="assistant", content="再见，下次再聊~", is_temporary=True,
+                role="assistant", content=goodbye, is_temporary=True,
             ))
 
         self.logger.bind(tag=TAG).debug("已注入工具调用 few-shot 示例")
@@ -1088,11 +1112,24 @@ class ConnectionHandler:
             self.dialogue.put(
                 Message(
                     role="user",
-                    content="[系统提示] 已达到最大工具调用次数限制，请你基于目前已经获取的所有信息，直接给出最终答案。不要再尝试调用任何工具。",
+                    content=localized_message(
+                        self.config,
+                        "Se alcanzó el límite de llamadas a herramientas. Responde directamente en español con la información disponible.",
+                        "[系统提示] 已达到最大工具调用次数限制，请你基于目前已经获取的所有信息，直接给出最终答案。不要再尝试调用任何工具。",
+                    ),
                 )
             )
 
         # Define intent functions
+        # chat runs in a worker; MCP replies must remain free to run on the loop.
+        if depth == 0 and self.intent_type == "function_call":
+            registration = asyncio.run_coroutine_threadsafe(
+                wait_for_camera_registration(self, query), self.loop
+            )
+            try:
+                registration.result(timeout=4)
+            except FutureTimeoutError:
+                registration.cancel()
         functions = None
         # 达到最大深度时，禁用工具调用，强制 LLM 直接回答
         if (
@@ -1104,7 +1141,7 @@ class ConnectionHandler:
             # 仅在第一层调用时注入 direct_answer 虚拟工具
             # 递归调用（depth>0）不注入，避免模型在生成文本回复时再次调 direct_answer 导致循环
             if functions is not None and depth == 0:
-                functions.append(DIRECT_ANSWER_TOOL)
+                functions.append(direct_answer_tool(self.config))
 
         response_message = []
 

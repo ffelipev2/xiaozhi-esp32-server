@@ -1,5 +1,6 @@
 import json
 import copy
+import asyncio
 from aiohttp import web
 from config.logger import setup_logging
 from core.api.base_handler import BaseHandler
@@ -127,7 +128,9 @@ class VisionHandler(BaseHandler):
                 vllm_type, current_config["VLLM"][select_vllm_module]
             )
 
-            result = vllm.response(question, image_base64)
+            # Local image inference can take seconds. Keep WebSocket/audio
+            # processing responsive while the synchronous provider runs.
+            result = await asyncio.to_thread(vllm.response, question, image_base64)
 
             return_json = {
                 "success": True,

@@ -163,6 +163,11 @@ main/manager-web/node_modules
 .env.development
 
 # model files
+# Downloaded local Spanish ASR model and FFmpeg executables
+/main/xiaozhi-server/models/vosk/
+/main/xiaozhi-server/models/vosk-model-*.zip
+/main/xiaozhi-server/tools/ffmpeg-static/
+/main/xiaozhi-server/tools/ffmpeg-static.zip
 main/xiaozhi-server/models/SenseVoiceSmall/model.pt
 main/xiaozhi-server/models/sherpa-onnx*
 /main/xiaozhi-server/audio_ref/

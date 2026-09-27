@@ -1,0 +1,75 @@
+# Local-network endpoint announced by the OTA service to the ESP32.
+# Keep this address in sync with the PC's Wi-Fi IPv4 address.
+server:
+  websocket: ws://192.168.1.7:8000/xiaozhi/v1/
+  vision_explain: http://192.168.1.7:8003/mcp/vision/explain
+
+# This device is a Spanish-only local voice assistant.
+response_language: es
+prompt: |
+  Eres una asistente de voz amable y útil.
+  Estás integrada en una XIAO ESP32-S3 Sense. Si está disponible la herramienta
+  self_camera_take_photo, puedes tomar y analizar fotos de su cámara bajo
+  demanda. Utilízala cuando te pidan mirar; espera su resultado para describir.
+  Responde exclusivamente en español neutro, incluso si el usuario usa una
+  palabra en otro idioma. Nunca respondas en chino. Mantén las respuestas
+  breves, naturales y adecuadas para leerlas en la página del asistente.
+
+# The upstream template contains Chinese examples and farewell rules.  Use a
+# dedicated Spanish-only template so an Edge Spanish voice never receives CJK
+# text from the local model.
+prompt_template: spanish-voice-prompt.txt
+
+system_error_response: "Lo siento, tuve un problema. Inténtalo otra vez."
+# Keep internal tool names out of the page's recognized-speech history.
+show_tool_call_messages: false
+end_prompt:
+  enable: false
+
+# WakeNet on the ESP32 emits this exact text. Treat it as activation only;
+# replying to it would make the speaker say "Alexa" and trigger a feedback loop.
+wakeup_words:
+  - "Alexa"
+enable_greeting: false
+
+# Run the conversation model locally through Ollama.  The base configuration
+# defines OllamaLLM as qwen2.5 at http://localhost:11434.
+selected_module:
+  TTS: TextOnly
+  LLM: OllamaLLM
+  ASR: VoskASR
+  VLLM: OllamaVision
+  Intent: function_call
+
+VLLM:
+  OllamaVision:
+    type: openai
+    model_name: qwen2.5vl:3b
+    base_url: http://localhost:11434/v1
+    api_key: ollama
+    max_tokens: 300
+    temperature: 0.2
+    system_prompt: |
+      Eres la visión de una asistente de voz. Responde exclusivamente en español,
+      de forma breve y natural. Describe únicamente lo visible en la imagen.
+      Si no puedes leer un texto o identificar algo, dilo sin inventar detalles.
+
+LLM:
+  OllamaLLM:
+    model_name: qwen2.5:7b
+    route_camera_requests: true
+
+TTS:
+  TextOnly:
+    type: text_only
+    language: español
+    output_dir: tmp/
+  EdgeTTS:
+    voice: es-CL-CatalinaNeural
+    # The prompt template takes its output language from the active TTS
+    # provider. Without this explicit value it defaults to Chinese.
+    language: español
+
+ASR:
+  VoskASR:
+    model_path: models/vosk/vosk-model-small-es-0.42

@@ -1,7 +1,10 @@
 from config.logger import setup_logging
 from openai import OpenAI
 import json
+import uuid
+from types import SimpleNamespace
 from core.providers.llm.base import LLMProviderBase
+from core.utils.camera_requests import CAMERA_TOOL, camera_question, is_camera_request
 
 TAG = __name__
 logger = setup_logging()
@@ -10,6 +13,7 @@ logger = setup_logging()
 class LLMProvider(LLMProviderBase):
     def __init__(self, config):
         self.model_name = config.get("model_name")
+        self.route_camera_requests = config.get("route_camera_requests", False)
         self.base_url = config.get("base_url", "http://localhost:11434")
         # Initialize OpenAI client with Ollama base URL
         # 如果没有v1，增加v1
@@ -43,8 +47,14 @@ class LLMProvider(LLMProviderBase):
             # 使用修改后的对话
             dialogue = dialogue_copy
 
+        # The language repair pass needs a short, deterministic request with a
+        # bounded timeout. Ordinary conversation keeps its existing defaults.
+        request_options = {
+            key: kwargs[key] for key in ("temperature", "max_tokens", "timeout")
+            if key in kwargs
+        }
         responses = self.client.chat.completions.create(
-            model=self.model_name, messages=dialogue, stream=True
+            model=self.model_name, messages=dialogue, stream=True, **request_options,
         )
         is_active = True
         # 用于处理跨chunk的标签
@@ -92,6 +102,33 @@ class LLMProvider(LLMProviderBase):
             responses.close()
 
     def response_with_functions(self, session_id, dialogue, functions=None):
+        # Route explicit camera requests through the existing MCP tool pipeline.
+        # Only a tool actually advertised by this device may be called. A tool
+        # result is not a new request, so recursive LLM calls never capture again.
+        if (
+            self.route_camera_requests
+            and dialogue
+            and dialogue[-1].get("role") == "user"
+            and is_camera_request(dialogue[-1].get("content"))
+            and any(
+                tool.get("function", {}).get("name") == CAMERA_TOOL
+                for tool in (functions or [])
+            )
+        ):
+            yield None, [SimpleNamespace(
+                index=0,
+                id="call_" + uuid.uuid4().hex,
+                type="function",
+                function=SimpleNamespace(
+                    name=CAMERA_TOOL,
+                    arguments=json.dumps(
+                        {"question": camera_question(dialogue[-1]["content"])},
+                        ensure_ascii=False,
+                    ),
+                ),
+            )]
+            return
+
         # 如果是qwen3模型，在用户最后一条消息中添加/no_think指令
         if self.is_qwen3:
             # 复制对话列表，避免修改原始对话
